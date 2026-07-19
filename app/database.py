@@ -41,6 +41,17 @@ class Database:
                     enrollment_year INTEGER
                 );
 
+                CREATE TABLE IF NOT EXISTS lecturers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER UNIQUE,
+                    lecturer_id TEXT UNIQUE NOT NULL,
+                    full_name TEXT NOT NULL,
+                    email TEXT,
+                    phone TEXT NOT NULL,
+                    department TEXT,
+                    specialization TEXT
+                );
+
                 CREATE TABLE IF NOT EXISTS courses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     course_id TEXT UNIQUE NOT NULL,
@@ -92,6 +103,63 @@ class Database:
                 ("lecturer", "lecturer123", "lecturer", "lecturer@university.edu"),
             )
             conn.commit()
+
+        student_user = conn.execute(
+            "SELECT id, email FROM users WHERE username = 'student' LIMIT 1"
+        ).fetchone()
+        if student_user:
+            student_profile = conn.execute(
+                "SELECT id FROM students WHERE user_id = ?", (student_user["id"],)
+            ).fetchone()
+            if not student_profile:
+                conn.execute(
+                    """
+                    INSERT INTO students (
+                        user_id, student_id, full_name, date_of_birth, gender,
+                        address, email, phone, major, enrollment_year
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        student_user["id"],
+                        "00001",
+                        "Nguyễn Minh Anh",
+                        "15-08-2005",
+                        "Nữ",
+                        "Thành phố Hồ Chí Minh",
+                        student_user["email"],
+                        "0901234567",
+                        "CNTT",
+                        2024,
+                    ),
+                )
+                conn.commit()
+
+        lecturer_user = conn.execute(
+            "SELECT id, email FROM users WHERE username = 'lecturer' LIMIT 1"
+        ).fetchone()
+        if lecturer_user:
+            lecturer_profile = conn.execute(
+                "SELECT id FROM lecturers WHERE user_id = ?", (lecturer_user["id"],)
+            ).fetchone()
+            if not lecturer_profile:
+                conn.execute(
+                    """
+                    INSERT INTO lecturers (
+                        user_id, lecturer_id, full_name, email, phone,
+                        department, specialization
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        lecturer_user["id"],
+                        "GV001",
+                        "Giảng viên Demo",
+                        lecturer_user["email"],
+                        "0900000001",
+                        "Giáo dục",
+                        "Giảng dạy đại cương",
+                    ),
+                )
+                conn.commit()
 
         course_count = conn.execute("SELECT COUNT(*) AS count FROM courses").fetchone()["count"]
         if course_count == 0:

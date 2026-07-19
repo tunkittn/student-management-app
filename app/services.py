@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 
 from .database import Database
-from .models import Course, Enrollment, Grade, Student, User
+from .models import Course, Enrollment, Grade, Lecturer, Student, User
 
 
 class AppService:
@@ -53,6 +54,199 @@ class AppService:
                 "SELECT id, course_id, course_name, credit_hours, department, lecturer_id, semester, capacity FROM courses ORDER BY course_name"
             ).fetchall()
             return [Course(**dict(row)) for row in rows]
+
+    def list_courses_by_lecturer(self, lecturer_id: int) -> list[Course]:
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                "SELECT id, course_id, course_name, credit_hours, department, lecturer_id, semester, capacity "
+                "FROM courses WHERE lecturer_id = ? ORDER BY course_name",
+                (lecturer_id,),
+            ).fetchall()
+            return [Course(**dict(row)) for row in rows]
+
+    def get_lecturer_profile(self, user_id: int) -> Lecturer | None:
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT id, user_id, lecturer_id, full_name, email, phone, department, specialization "
+                "FROM lecturers WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            return Lecturer(**dict(row)) if row else None
+
+    def list_lecturers(self) -> list[Lecturer]:
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                "SELECT id, user_id, lecturer_id, full_name, email, phone, department, specialization "
+                "FROM lecturers ORDER BY full_name"
+            ).fetchall()
+            return [Lecturer(**dict(row)) for row in rows]
+
+    def get_lecturer_by_id(self, lecturer_id: int) -> Lecturer | None:
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT id, user_id, lecturer_id, full_name, email, phone, department, specialization "
+                "FROM lecturers WHERE id = ?",
+                (lecturer_id,),
+            ).fetchone()
+            return Lecturer(**dict(row)) if row else None
+
+    def add_lecturer(self, lecturer: Lecturer) -> bool:
+        if not lecturer.full_name.strip() or not lecturer.lecturer_id.strip() or not lecturer.phone.strip():
+            return False
+        with self.db.connection() as conn:
+            try:
+                conn.execute(
+                    "INSERT INTO users (username, password, role, email) VALUES (?, ?, 'lecturer', ?)",
+                    (lecturer.lecturer_id.strip(), lecturer.phone.strip(), lecturer.email),
+                )
+                user_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+                conn.execute(
+                    """
+                    INSERT INTO lecturers (
+                        user_id, lecturer_id, full_name, email, phone,
+                        department, specialization
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        lecturer.lecturer_id.strip(),
+                        lecturer.full_name.strip(),
+                        lecturer.email.strip(),
+                        lecturer.phone.strip(),
+                        lecturer.department.strip(),
+                        lecturer.specialization.strip(),
+                    ),
+                )
+                conn.commit()
+                return True
+            except sqlite3.IntegrityError:
+                conn.rollback()
+                return False
+
+    def update_lecturer(self, lecturer: Lecturer) -> bool:
+        with self.db.connection() as conn:
+            current = conn.execute(
+                "SELECT user_id FROM lecturers WHERE id = ?", (lecturer.id,)
+            ).fetchone()
+            if not current:
+                return False
+            lecturer.user_id = current["user_id"]
+            try:
+                conn.execute(
+                    "UPDATE users SET username = ?, password = ?, email = ? WHERE id = ?",
+                    (lecturer.lecturer_id.strip(), lecturer.phone.strip(), lecturer.email, lecturer.user_id),
+                )
+                conn.execute(
+                    """
+                    UPDATE lecturers SET lecturer_id = ?, full_name = ?, email = ?,
+                        phone = ?, department = ?, specialization = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        lecturer.lecturer_id.strip(),
+                        lecturer.full_name.strip(),
+                        lecturer.email.strip(),
+                        lecturer.phone.strip(),
+                        lecturer.department.strip(),
+                        lecturer.specialization.strip(),
+                        lecturer.id,
+                    ),
+                )
+                conn.commit()
+                return True
+            except sqlite3.IntegrityError:
+                conn.rollback()
+                return False
+
+    def delete_lecturer(self, lecturer_id: int) -> bool:
+        with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT user_id FROM lecturers WHERE id = ?", (lecturer_id,)
+            ).fetchone()
+            if not row:
+                return False
+            assigned = conn.execute(
+                "SELECT COUNT(*) FROM courses WHERE lecturer_id = ?", (row["user_id"],)
+            ).fetchone()[0]
+            if assigned:
+                return False
+            conn.execute("DELETE FROM lecturers WHERE id = ?", (lecturer_id,))
+            conn.execute("DELETE FROM users WHERE id = ?", (row["user_id"],))
+            conn.commit()
+            return True
+
+    def assign_course_lecturer(self, course_id: int, lecturer_user_id: int) -> bool:
+        with self.db.connection() as conn:
+            lecturer = conn.execute(
+                "SELECT id FROM lecturers WHERE user_id = ?", (lecturer_user_id,)
+            ).fetchone()
+            course = conn.execute("SELECT id FROM courses WHERE id = ?", (course_id,)).fetchone()
+            if not lecturer or not course:
+                return False
+            conn.execute(
+                "UPDATE courses SET lecturer_id = ? WHERE id = ?",
+                (lecturer_user_id, course_id),
+            )
+            conn.commit()
+            return True
+
+    def get_admin_stats(self) -> dict[str, int | float]:
+        with self.db.connection() as conn:
+            return {
+                "students": conn.execute("SELECT COUNT(*) FROM students").fetchone()[0],
+                "courses": conn.execute("SELECT COUNT(*) FROM courses").fetchone()[0],
+                "enrollments": conn.execute("SELECT COUNT(*) FROM enrollments WHERE status = 'ACTIVE'").fetchone()[0],
+                "lecturers": conn.execute("SELECT COUNT(*) FROM users WHERE role = 'lecturer'").fetchone()[0],
+            }
+
+    def get_student_stats(self, student_id: int) -> dict[str, int | float]:
+        with self.db.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT e.course_id) AS courses,
+                    COUNT(DISTINCT CASE WHEN g.result = 'PASS' THEN g.course_id END) AS passed,
+                    COALESCE(AVG(g.total_score), 0) AS average
+                FROM enrollments e
+                LEFT JOIN grades g
+                    ON g.student_id = e.student_id AND g.course_id = e.course_id
+                WHERE e.student_id = ? AND e.status = 'ACTIVE'
+                """,
+                (student_id,),
+            ).fetchone()
+            return {
+                "courses": row["courses"],
+                "passed": row["passed"],
+                "average": round(row["average"], 2),
+            }
+
+    def get_lecturer_stats(self, lecturer_id: int) -> dict[str, int | float]:
+        with self.db.connection() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT c.id) AS courses,
+                    COUNT(DISTINCT e.student_id) AS students,
+                    COUNT(DISTINCT g.id) AS graded
+                FROM courses c
+                LEFT JOIN enrollments e ON e.course_id = c.id AND e.status = 'ACTIVE'
+                LEFT JOIN grades g ON g.course_id = c.id AND g.student_id = e.student_id
+                WHERE c.lecturer_id = ?
+                """,
+                (lecturer_id,),
+            ).fetchone()
+            return {
+                "courses": row["courses"],
+                "students": row["students"],
+                "graded": row["graded"],
+            }
+
+    def get_course_enrollment_count(self, course_id: int) -> int:
+        with self.db.connection() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM enrollments WHERE course_id = ? AND status = 'ACTIVE'",
+                (course_id,),
+            ).fetchone()[0]
 
     def get_course_by_id(self, course_id: int) -> Course | None:
         with self.db.connection() as conn:
@@ -155,6 +349,13 @@ class AppService:
 
     def update_student(self, student: Student) -> bool:
         with self.db.connection() as conn:
+            current = conn.execute(
+                "SELECT user_id FROM students WHERE id = ?", (student.id,)
+            ).fetchone()
+            if not current:
+                return False
+            if student.user_id is None:
+                student.user_id = current["user_id"]
             if student.user_id is not None:
                 conn.execute(
                     "UPDATE users SET username=?, password=?, email=? WHERE id = ?",
@@ -193,7 +394,16 @@ class AppService:
 
     def delete_student(self, student_id: int) -> bool:
         with self.db.connection() as conn:
+            row = conn.execute(
+                "SELECT user_id FROM students WHERE id = ?", (student_id,)
+            ).fetchone()
+            if not row:
+                return False
+            conn.execute("DELETE FROM grades WHERE student_id = ?", (student_id,))
+            conn.execute("DELETE FROM enrollments WHERE student_id = ?", (student_id,))
             conn.execute("DELETE FROM students WHERE id = ?", (student_id,))
+            if row["user_id"] is not None:
+                conn.execute("DELETE FROM users WHERE id = ?", (row["user_id"],))
             conn.commit()
             return True
 

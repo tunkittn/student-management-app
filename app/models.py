@@ -26,6 +26,18 @@ class Student:
 
 
 @dataclass
+class Lecturer:
+    id: int
+    user_id: int | None = None
+    lecturer_id: str = ""
+    full_name: str = ""
+    email: str = ""
+    phone: str = ""
+    department: str = ""
+    specialization: str = ""
+
+
+@dataclass
 class Course:
     id: int
     course_id: str
