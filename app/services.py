@@ -5,6 +5,7 @@ from typing import Any
 
 from .database import Database
 from .models import Course, Enrollment, Grade, Lecturer, Student, User
+from .security import hash_password, verify_password
 
 
 class AppService:
@@ -14,11 +15,16 @@ class AppService:
     def authenticate(self, username: str, password: str) -> User | None:
         with self.db.connection() as conn:
             row = conn.execute(
-                "SELECT id, username, password, role, email FROM users WHERE username = ? AND password = ?",
-                (username, password),
+                "SELECT id, username, password, role, email FROM users WHERE username = ?",
+                (username,),
             ).fetchone()
-            if row:
-                return User(**dict(row))
+            if row and verify_password(password, row["password"]):
+                return User(
+                    id=row["id"],
+                    username=row["username"],
+                    role=row["role"],
+                    email=row["email"],
+                )
             return None
 
     def get_student_profile(self, user_id: int) -> Student | None:
@@ -97,7 +103,7 @@ class AppService:
             try:
                 conn.execute(
                     "INSERT INTO users (username, password, role, email) VALUES (?, ?, 'lecturer', ?)",
-                    (lecturer.lecturer_id.strip(), lecturer.phone.strip(), lecturer.email),
+                    (lecturer.lecturer_id.strip(), hash_password(lecturer.phone.strip()), lecturer.email),
                 )
                 user_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
                 conn.execute(
@@ -134,7 +140,7 @@ class AppService:
             try:
                 conn.execute(
                     "UPDATE users SET username = ?, password = ?, email = ? WHERE id = ?",
-                    (lecturer.lecturer_id.strip(), lecturer.phone.strip(), lecturer.email, lecturer.user_id),
+                    (lecturer.lecturer_id.strip(), hash_password(lecturer.phone.strip()), lecturer.email, lecturer.user_id),
                 )
                 conn.execute(
                     """
@@ -326,7 +332,7 @@ class AppService:
                 return False
             conn.execute(
                 "INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)",
-                (student.student_id.strip(), student.phone.strip(), "student", student.email),
+                (student.student_id.strip(), hash_password(student.phone.strip()), "student", student.email),
             )
             user_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
             conn.execute(
@@ -359,7 +365,7 @@ class AppService:
             if student.user_id is not None:
                 conn.execute(
                     "UPDATE users SET username=?, password=?, email=? WHERE id = ?",
-                    (student.student_id.strip(), student.phone.strip(), student.email, student.user_id),
+                    (student.student_id.strip(), hash_password(student.phone.strip()), student.email, student.user_id),
                 )
             else:
                 existing_user = conn.execute(
@@ -370,7 +376,7 @@ class AppService:
                     return False
                 conn.execute(
                     "INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)",
-                    (student.student_id.strip(), student.phone.strip(), "student", student.email),
+                    (student.student_id.strip(), hash_password(student.phone.strip()), "student", student.email),
                 )
                 student.user_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
             conn.execute(

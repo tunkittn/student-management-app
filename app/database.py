@@ -1,6 +1,8 @@
 import sqlite3
 from pathlib import Path
 
+from .security import hash_password, is_password_hash
+
 
 class Database:
     def __init__(self, db_path: str | None = None):
@@ -86,21 +88,33 @@ class Database:
                 """
             )
             self.seed_data(conn)
+            self.migrate_passwords(conn)
+
+    def migrate_passwords(self, conn: sqlite3.Connection) -> None:
+        """Convert legacy plaintext passwords without changing login credentials."""
+        rows = conn.execute("SELECT id, password FROM users").fetchall()
+        for row in rows:
+            if not is_password_hash(row["password"]):
+                conn.execute(
+                    "UPDATE users SET password = ? WHERE id = ?",
+                    (hash_password(row["password"]), row["id"]),
+                )
+        conn.commit()
 
     def seed_data(self, conn: sqlite3.Connection) -> None:
         user_count = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
         if user_count == 0:
             conn.execute(
                 "INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)",
-                ("admin", "admin123", "admin", "admin@university.edu"),
+                ("admin", hash_password("admin123"), "admin", "admin@university.edu"),
             )
             conn.execute(
                 "INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)",
-                ("student", "student123", "student", "student@university.edu"),
+                ("student", hash_password("student123"), "student", "student@university.edu"),
             )
             conn.execute(
                 "INSERT INTO users (username, password, role, email) VALUES (?, ?, ?, ?)",
-                ("lecturer", "lecturer123", "lecturer", "lecturer@university.edu"),
+                ("lecturer", hash_password("lecturer123"), "lecturer", "lecturer@university.edu"),
             )
             conn.commit()
 
